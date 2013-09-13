@@ -1,0 +1,13 @@
+{application, chair, [
+	{description, "CouchDB client"},
+	{vsn, "0.5.0"},
+	{modules, [
+          ]},
+	{registered, [
+	]},
+	{applications, [
+               ]},
+	{mod, {chair_app, []}},
+	{start_phases, []} 
+]
+}.
