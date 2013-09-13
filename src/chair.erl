@@ -31,8 +31,8 @@
 %% ====================================================================
 -export([start_link/0]).
 -export([config_db/4, get_dbs/0]).
--export([get_info/1, get_uuid/1, get_uuid/2]).
--export([get_doc/2, insert_doc/2]).
+-export([get_info/1, get_uuid/1, get_uuids/2]).
+-export([get_doc/2, insert_doc/2, update_doc/2, delete_doc/2]).
 
 start_link() ->
 	gen_server:start_link(?SERVER, ?MODULE, [], []).
@@ -55,17 +55,17 @@ get_info(DB) when is_atom(DB) ->
 		{ok, Config} -> 
 			case execute_get(Config#db_config.host_url) of
 				{ok, 200, Body} -> 
-					Doc = jsondoc:decode(Body),
-					{ok, Doc};
+					Response = jsondoc:decode(Body),
+					{ok, Response};
 				{error, Error} -> {error, Error}
 			end;
 		error -> {error, db_not_found}
 	end.
 
 get_uuid(DB) when is_atom(DB) ->
-	get_uuid(DB, 1).
+	get_uuids(DB, 1).
 
-get_uuid(DB, Count) when is_atom(DB) andalso is_integer(Count) andalso Count > 0 ->
+get_uuids(DB, Count) when is_atom(DB) andalso is_integer(Count) andalso Count > 0 ->
 	case get_config(DB) of
 		{ok, Config} -> 
 			Query = string:concat("_uuids?count=", integer_to_list(Count)),
@@ -86,11 +86,9 @@ get_doc(DB, ID) when is_atom(DB) and is_list(ID) ->
 			Url = string:concat(Config#db_config.db_url, ID),
 			case execute_get(Url) of
 				{ok, 200, Body} -> 
-					Doc = jsondoc:decode(Body),
-					{ok, Doc};
-				{ok, _Status, Body} ->
-					Doc = jsondoc:decode(Body),
-					{db_error, Doc};						
+					Response = jsondoc:decode(Body),
+					{ok, Response};
+				{ok, _Status, Body} -> proccess_db_error(Body);						
 				{error, Error} -> {error, Error}
 			end;
 		error -> {error, db_not_found}
@@ -99,7 +97,49 @@ get_doc(DB, ID) when is_atom(DB) and is_binary(ID) ->
 	get_doc(DB, binary_to_list(ID)).
 
 insert_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Doc) == 1 ->
-	gen_server:call(?MODULE, {insert_doc, DB, Doc}).
+	case get_config(DB) of
+		{ok, Config} -> 
+			Data = jsondoc:encode(Doc),
+			case execute_post(Config#db_config.db_url, Data) of
+				{ok, 201, Body} -> proccess_response_doc(Doc, Body);
+				{ok, 202, Body} -> proccess_response_doc(Doc, Body);			
+				{ok, _Status, Body} -> proccess_db_error(Body);						
+				{error, Error} -> {error, Error}
+			end;
+		error -> {error, db_not_found}
+	end.
+
+update_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Doc) == 1 ->
+	case get_config(DB) of
+		{ok, Config} -> 
+			ID = jsondoc:get_value(<<"_id">>, Doc),
+			Url = string:concat(Config#db_config.db_url, binary_to_list(ID)),
+			Data = jsondoc:encode(Doc),
+			case execute_put(Url, Data) of
+				{ok, 201, Body} -> proccess_response_doc(Doc, Body);
+				{ok, 202, Body} -> proccess_response_doc(Doc, Body);			
+				{ok, _Status, Body} -> proccess_db_error(Body);						
+				{error, Error} -> {error, Error}
+			end;
+		error -> {error, db_not_found}
+	end.
+
+delete_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Doc) == 1 ->
+	case get_config(DB) of
+		{ok, Config} -> 
+			ID = jsondoc:get_value(<<"_id">>, Doc),
+			Rev = jsondoc:get_value(<<"_rev">>, Doc),
+			URLDoc = string:concat(Config#db_config.db_url, binary_to_list(ID)),
+			Query = string:concat("?rev=", binary_to_list(Rev)),
+			Url = string:concat(URLDoc, Query),
+			case execute_delete(Url) of
+				{ok, 200, Body} -> proccess_delete(Body);
+				{ok, 202, Body} -> proccess_delete(Body);			
+				{ok, _Status, Body} -> proccess_db_error(Body);						
+				{error, Error} -> {error, Error}
+			end;
+		error -> {error, db_not_found}
+	end.
 
 %% ====================================================================
 %% Behavioural functions 
@@ -151,8 +191,41 @@ get_config(DB) ->
 	gen_server:call(?MODULE, {get_config, DB}).
 
 execute_get(Url) ->
-	case ibrowse:send_req(Url, [?ACCEPT_HEADER], get) of 
-		{ok, Status, _Headers, Body} -> {ok, list_to_integer(Status), Body};
-		{error, Error} -> {error, Error} 
-	end.
+	execute(Url, get).
 	
+execute_post(Url, Data) -> 
+	execute(Url, post, Data).
+
+execute_put(Url, Data) -> 
+	execute(Url, put, Data).
+
+execute_delete(Url) -> 
+	execute(Url, delete).
+
+execute(Url, Method) ->
+	Response = ibrowse:send_req(Url, [?ACCEPT_HEADER], Method),
+	response(Response).
+	
+execute(Url, Method, Body) ->
+	Response = ibrowse:send_req(Url, [?ACCEPT_HEADER, ?CONTENT_TYPE_HEADER], Method, Body),
+	response(Response).
+
+response({ok, Status, _Headers, Body}) -> {ok, list_to_integer(Status), Body};
+response({error, Error}) -> {error, Error}.
+
+proccess_response_doc(Doc, Body) ->
+	Response = jsondoc:decode(Body),
+	Rev = jsondoc:get_value(<<"rev">>, Response),
+	Doc1 = jsondoc:set_value(Doc, <<"_rev">>, Rev),
+	{ok, Doc1}.
+
+proccess_db_error(Body) ->
+	Response = jsondoc:decode(Body),
+	{db_error, Response}.
+
+proccess_delete(Body) ->
+	Response = jsondoc:decode(Body),
+	Rev = jsondoc:get_value(<<"rev">>, Response),
+	Doc = jsondoc:new(),
+	Doc1 = jsondoc:set_value(Doc, <<"_rev">>, Rev),
+	{ok, Doc1}.
