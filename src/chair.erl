@@ -33,6 +33,7 @@
 -export([config_db/4, get_dbs/0]).
 -export([get_info/1, get_uuid/1, get_uuids/2]).
 -export([get_doc/2, insert_doc/2, update_doc/2, delete_doc/2]).
+-export([search_view/4, search_view_by_key/4]).
 
 start_link() ->
 	gen_server:start_link(?SERVER, ?MODULE, [], []).
@@ -41,10 +42,10 @@ config_db(DB, Host, Port, DBName) when is_atom(DB) andalso is_integer(Port) ->
 	HostURL = "http://" ++ Host ++ ":" ++ integer_to_list(Port) ++ "/",
 	DBURL = HostURL ++ DBName ++ "/",
 	Config = #db_config{host=Host, 
-						port=Port, 
-						name=DBName, 
-						host_url=HostURL,
-						db_url=DBURL},
+			port=Port, 
+			name=DBName, 
+			host_url=HostURL,
+			db_url=DBURL},
 	gen_server:call(?MODULE, {config_db, DB, Config}).
 
 get_dbs() ->
@@ -54,7 +55,7 @@ get_info(DB) when is_atom(DB) ->
 	case get_config(DB) of
 		{ok, Config} -> 
 			case execute_get(Config#db_config.host_url) of
-				{ok, 200, Body} -> 
+				{ok, "200", Body} -> 
 					Response = jsondoc:decode(Body),
 					{ok, Response};
 				{error, Error} -> {error, Error}
@@ -71,7 +72,7 @@ get_uuids(DB, Count) when is_atom(DB) andalso is_integer(Count) andalso Count > 
 			Query = string:concat("_uuids?count=", integer_to_list(Count)),
 			Url = string:concat(Config#db_config.host_url, Query),
 			case execute_get(Url) of
-				{ok, 200, Body} -> 
+				{ok, "200", Body} -> 
 					Doc = jsondoc:decode(Body),
 					UUIDs = jsondoc:get_value(<<"uuids">>, Doc),
 					{ok, UUIDs};
@@ -85,7 +86,7 @@ get_doc(DB, ID) when is_atom(DB) and is_list(ID) ->
 		{ok, Config} -> 
 			Url = string:concat(Config#db_config.db_url, ID),
 			case execute_get(Url) of
-				{ok, 200, Body} -> 
+				{ok, "200", Body} -> 
 					Response = jsondoc:decode(Body),
 					{ok, Response};
 				{ok, _Status, Body} -> proccess_db_error(Body);						
@@ -101,8 +102,8 @@ insert_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Do
 		{ok, Config} -> 
 			Data = jsondoc:encode(Doc),
 			case execute_post(Config#db_config.db_url, Data) of
-				{ok, 201, Body} -> proccess_response_doc(Doc, Body);
-				{ok, 202, Body} -> proccess_response_doc(Doc, Body);			
+				{ok, "201", Body} -> proccess_response_doc(Doc, Body);
+				{ok, "202", Body} -> proccess_response_doc(Doc, Body);			
 				{ok, _Status, Body} -> proccess_db_error(Body);						
 				{error, Error} -> {error, Error}
 			end;
@@ -116,8 +117,8 @@ update_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Do
 			Url = string:concat(Config#db_config.db_url, binary_to_list(ID)),
 			Data = jsondoc:encode(Doc),
 			case execute_put(Url, Data) of
-				{ok, 201, Body} -> proccess_response_doc(Doc, Body);
-				{ok, 202, Body} -> proccess_response_doc(Doc, Body);			
+				{ok, "201", Body} -> proccess_response_doc(Doc, Body);
+				{ok, "202", Body} -> proccess_response_doc(Doc, Body);			
 				{ok, _Status, Body} -> proccess_db_error(Body);						
 				{error, Error} -> {error, Error}
 			end;
@@ -133,13 +134,36 @@ delete_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Do
 			Query = string:concat("?rev=", binary_to_list(Rev)),
 			Url = string:concat(URLDoc, Query),
 			case execute_delete(Url) of
-				{ok, 200, Body} -> proccess_delete(Body);
-				{ok, 202, Body} -> proccess_delete(Body);			
+				{ok, "200", Body} -> proccess_delete(Body);
+				{ok, "202", Body} -> proccess_delete(Body);			
 				{ok, _Status, Body} -> proccess_db_error(Body);						
 				{error, Error} -> {error, Error}
 			end;
 		error -> {error, db_not_found}
 	end.
+
+search_view(DB, AppName, ViewName, Query) when is_atom(DB) andalso is_list(AppName) andalso is_list(ViewName) andalso is_list(Query) ->
+	case get_config(DB) of
+		{ok, Config} -> 
+			View = "_design/" ++ AppName ++ "/_view/" ++ ViewName,
+			URLView = string:concat(Config#db_config.db_url, View),
+			ViewQuery = get_view_query(Query, ""),
+			Url = string:concat(URLView, ViewQuery),
+			case execute_get(Url) of
+				{ok, "200", Body} ->
+					Doc = jsondoc:decode(Body),
+					Rows = jsondoc:get_value(<<"rows">>, Doc),
+					{ok, Rows};
+				{ok, _Status, Body} -> proccess_db_error(Body);						
+				{error, Error} -> {error, Error}
+			end;
+		error -> {error, db_not_found}
+	end.
+
+search_view_by_key(DB, AppName, ViewName, Key) when is_atom(DB) andalso is_list(AppName) andalso is_list(ViewName) andalso is_binary(Key) ->
+	search_view_by_key(DB, AppName, ViewName, binary_to_list(Key));
+search_view_by_key(DB, AppName, ViewName, Key) when is_atom(DB) andalso is_list(AppName) andalso is_list(ViewName) ->
+	search_view(DB, AppName, ViewName, [{key, Key}]).
 
 %% ====================================================================
 %% Behavioural functions 
@@ -150,7 +174,7 @@ delete_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Do
 init([]) ->
 	process_flag(trap_exit, true),	
 	error_logger:info_msg("~p starting on [~p]...\n", [?MODULE, self()]),	
-    {ok, #state{databases=dict:new()}}.
+	{ok, #state{databases=dict:new()}}.
 
 %% handle_call
 handle_call({get_config, DB}, _From, State=#state{databases=DBs}) ->
@@ -158,30 +182,30 @@ handle_call({get_config, DB}, _From, State=#state{databases=DBs}) ->
 	{reply, Reply, State};
 
 handle_call({get_dbs}, _From, State=#state{databases=DBs}) ->
-    Reply = dict:fetch_keys(DBs),
-    {reply, Reply, State};
+	Reply = dict:fetch_keys(DBs),
+	{reply, Reply, State};
 
 handle_call({config_db, DB, Config}, _From, State=#state{databases=DBs}) ->
-    NewDBs=dict:store(DB, Config, DBs),
-    {reply, ok, State#state{databases=NewDBs}}.
+	NewDBs=dict:store(DB, Config, DBs),
+	{reply, ok, State#state{databases=NewDBs}}.
 
 %% handle_cast
 handle_cast(Msg, State) ->
 	error_logger:info_msg("handle_cast(~p)\n", [Msg]),
-    {noreply, State}.
+	{noreply, State}.
 
 %% handle_info
 handle_info(Info, State) ->
 	error_logger:info_msg("handle_info(~p)\n", [Info]),
-    {noreply, State}.
+	{noreply, State}.
 
 %% terminate
 terminate(_Reason, _State) ->
-    ok.
+	ok.
 
 %% code_change
 code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
+	{ok, State}.
 
 %% ====================================================================
 %% Internal functions
@@ -192,7 +216,7 @@ get_config(DB) ->
 
 execute_get(Url) ->
 	execute(Url, get).
-	
+
 execute_post(Url, Data) -> 
 	execute(Url, post, Data).
 
@@ -205,12 +229,12 @@ execute_delete(Url) ->
 execute(Url, Method) ->
 	Response = ibrowse:send_req(Url, [?ACCEPT_HEADER], Method),
 	response(Response).
-	
+
 execute(Url, Method, Body) ->
 	Response = ibrowse:send_req(Url, [?ACCEPT_HEADER, ?CONTENT_TYPE_HEADER], Method, Body),
 	response(Response).
 
-response({ok, Status, _Headers, Body}) -> {ok, list_to_integer(Status), Body};
+response({ok, Status, _Headers, Body}) -> {ok, Status, Body};
 response({error, Error}) -> {error, Error}.
 
 proccess_response_doc(Doc, Body) ->
@@ -229,3 +253,32 @@ proccess_delete(Body) ->
 	Doc = jsondoc:new(),
 	Doc1 = jsondoc:set_value(Doc, <<"_rev">>, Rev),
 	{ok, Doc1}.
+
+get_view_query([], Query) -> Query;
+get_view_query([{key, Value}|T], Query) -> get_view_query(T, concat_value(Query, "key=", Value));
+get_view_query([{descending, Value}|T], Query) -> get_view_query(T, concat_value(Query, "descending=", Value));
+get_view_query([{endkey, Value}|T], Query) -> get_view_query(T, concat_value(Query, "endkey=", Value));
+get_view_query([{endkey_docid, Value}|T], Query) -> get_view_query(T, concat_value(Query, "endkey_docid=", Value));
+get_view_query([{group, Value}|T], Query) -> get_view_query(T, concat_value(Query, "group=", Value));
+get_view_query([{group_level, Value}|T], Query) -> get_view_query(T, concat_value(Query, "group_level=", Value));
+get_view_query([{include_docs, Value}|T], Query) -> get_view_query(T, concat_value(Query, "include_docs=", Value));
+get_view_query([{inclusive_end, Value}|T], Query) -> get_view_query(T, concat_value(Query, "inclusive_end=", Value));
+get_view_query([{limit, Value}|T], Query) -> get_view_query(T, concat_value(Query, "limit=", Value));
+get_view_query([{reduce, Value}|T], Query) -> get_view_query(T, concat_value(Query, "reduce=", Value));
+get_view_query([{skip, Value}|T], Query) -> get_view_query(T, concat_value(Query, "skip=", Value));
+get_view_query([{startkey, Value}|T], Query) -> get_view_query(T, concat_value(Query, "startkey=", Value));
+get_view_query([{startkey_docid, Value}|T], Query) -> get_view_query(T, concat_value(Query, "startkey_docid=", Value));
+get_view_query([{update_seq, Value}|T], Query) -> get_view_query(T, concat_value(Query, "update_seq=", Value));
+get_view_query([_|T], Query) -> get_view_query(T, Query).
+
+concat_value(Query, Key, Value) ->
+	Param = string:concat(Key, prepare_value(Value)),
+	contact_query(Query, Param).
+
+prepare_value(Value) when is_list(Value) -> "\"" ++ Value ++ "\"";
+prepare_value(Value) when is_binary(Value) -> prepare_value(binary_to_list(Value));
+prepare_value(Value) when is_integer(Value) -> integer_to_list(Value);
+prepare_value(Value) when is_atom(Value) -> atom_to_list(Value).
+
+contact_query("", Param) -> string:concat("?", Param);
+contact_query(Query, Param) -> Query ++ "&" ++ Param.
