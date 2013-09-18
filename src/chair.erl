@@ -16,11 +16,14 @@
 
 -module(chair).
 
--include("chair.hrl").
+-type db_name() :: atom().
+-export_type([db_name/0]).
 
 -define(SERVER, {local, ?MODULE}).
 -define(ACCEPT_HEADER, {"Accept", "application/json"}).
 -define(CONTENT_TYPE_HEADER, {"Content-Type", "application/json"}).
+
+-record(db_config, {host, port, name, host_url, db_url}).
 
 -behaviour(gen_server).
 
@@ -38,7 +41,8 @@
 start_link() ->
 	gen_server:start_link(?SERVER, ?MODULE, [], []).
 
-config_db(DB, Host, Port, DBName) when is_atom(DB) andalso is_integer(Port) ->
+-spec config_db(DB :: db_name(), Host :: string(), Port :: integer(), DBName :: string()) -> ok.
+config_db(DB, Host, Port, DBName) ->
 	HostURL = "http://" ++ Host ++ ":" ++ integer_to_list(Port) ++ "/",
 	DBURL = HostURL ++ DBName ++ "/",
 	Config = #db_config{host=Host, 
@@ -48,10 +52,12 @@ config_db(DB, Host, Port, DBName) when is_atom(DB) andalso is_integer(Port) ->
 			db_url=DBURL},
 	gen_server:call(?MODULE, {config_db, DB, Config}).
 
+-spec get_dbs() -> [db_name(), ...].
 get_dbs() ->
 	gen_server:call(?MODULE, {get_dbs}).
 
-get_info(DB) when is_atom(DB) ->
+-spec get_info(DB :: db_name()) -> {ok, jsondoc:jsondoc()} | {error, any()}.
+get_info(DB) ->
 	case get_config(DB) of
 		{ok, Config} -> 
 			case execute_get(Config#db_config.host_url) of
@@ -63,10 +69,12 @@ get_info(DB) when is_atom(DB) ->
 		error -> {error, db_not_found}
 	end.
 
-get_uuid(DB) when is_atom(DB) ->
+-spec get_uuid(DB :: db_name()) -> {ok, [binary()]} | {error, any()}.
+get_uuid(DB) ->
 	get_uuids(DB, 1).
 
-get_uuids(DB, Count) when is_atom(DB) andalso is_integer(Count) andalso Count > 0 ->
+-spec get_uuids(DB :: db_name(), Count :: pos_integer()) -> {ok, [binary(), ...]} | {error, any()}.
+get_uuids(DB, Count) ->
 	case get_config(DB) of
 		{ok, Config} -> 
 			Query = string:concat("_uuids?count=", integer_to_list(Count)),
@@ -81,7 +89,8 @@ get_uuids(DB, Count) when is_atom(DB) andalso is_integer(Count) andalso Count > 
 		error -> {error, db_not_found}
 	end.
 
-get_doc(DB, ID) when is_atom(DB) and is_list(ID) ->
+-spec get_doc(DB :: db_name(), ID :: iolist()) -> {ok, jsondoc:jsondoc()} | {db_error, jsondoc:jsondoc()} | {error, any()}.
+get_doc(DB, ID) when is_list(ID) ->
 	case get_config(DB) of
 		{ok, Config} -> 
 			Url = string:concat(Config#db_config.db_url, ID),
@@ -94,10 +103,11 @@ get_doc(DB, ID) when is_atom(DB) and is_list(ID) ->
 			end;
 		error -> {error, db_not_found}
 	end;
-get_doc(DB, ID) when is_atom(DB) and is_binary(ID) ->
+get_doc(DB, ID) when is_binary(ID) ->
 	get_doc(DB, binary_to_list(ID)).
 
-insert_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Doc) == 1 ->
+-spec insert_doc(DB :: db_name(), Doc :: jsondoc:jsondoc()) -> {ok, jsondoc:jsondoc()} | {db_error, jsondoc:jsondoc()} | {error, any()}.
+insert_doc(DB, Doc) ->
 	case get_config(DB) of
 		{ok, Config} -> 
 			Data = jsondoc:encode(Doc),
@@ -110,7 +120,8 @@ insert_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Do
 		error -> {error, db_not_found}
 	end.
 
-update_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Doc) == 1 ->
+-spec update_doc(DB :: db_name(), Doc :: jsondoc:jsondoc()) -> {ok, jsondoc:jsondoc()} | {db_error, jsondoc:jsondoc()} | {error, any()}.
+update_doc(DB, Doc) ->
 	case get_config(DB) of
 		{ok, Config} -> 
 			ID = jsondoc:get_value(<<"_id">>, Doc),
@@ -125,7 +136,8 @@ update_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Do
 		error -> {error, db_not_found}
 	end.
 
-delete_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Doc) == 1 ->
+-spec delete_doc(DB :: db_name(), Doc :: jsondoc:jsondoc()) -> {ok, jsondoc:jsondoc()} | {db_error, jsondoc:jsondoc()} | {error, any()}.
+delete_doc(DB, Doc) ->
 	case get_config(DB) of
 		{ok, Config} -> 
 			ID = jsondoc:get_value(<<"_id">>, Doc),
@@ -142,7 +154,8 @@ delete_doc(DB, Doc) when is_atom(DB) andalso is_tuple(Doc) andalso tuple_size(Do
 		error -> {error, db_not_found}
 	end.
 
-search_view(DB, AppName, ViewName, Query) when is_atom(DB) andalso is_list(AppName) andalso is_list(ViewName) andalso is_list(Query) ->
+-spec search_view(DB :: db_name(), AppName :: string(), ViewName :: string(), Query :: [{atom(), any()}, ...]) -> {ok, [jsondoc:jsondoc(), ...]} | {db_error, jsondoc:jsondoc()} | {error, any()}.
+search_view(DB, AppName, ViewName, Query) ->
 	case get_config(DB) of
 		{ok, Config} -> 
 			View = "_design/" ++ AppName ++ "/_view/" ++ ViewName,
@@ -160,9 +173,10 @@ search_view(DB, AppName, ViewName, Query) when is_atom(DB) andalso is_list(AppNa
 		error -> {error, db_not_found}
 	end.
 
-search_view_by_key(DB, AppName, ViewName, Key) when is_atom(DB) andalso is_list(AppName) andalso is_list(ViewName) andalso is_binary(Key) ->
+-spec search_view_by_key(DB :: db_name(), AppName :: string(), ViewName :: string(), Key :: any()) -> {ok, [jsondoc:jsondoc(), ...]} | {db_error, jsondoc:jsondoc()} | {error, any()}.
+search_view_by_key(DB, AppName, ViewName, Key) when is_binary(Key) ->
 	search_view_by_key(DB, AppName, ViewName, binary_to_list(Key));
-search_view_by_key(DB, AppName, ViewName, Key) when is_atom(DB) andalso is_list(AppName) andalso is_list(ViewName) ->
+search_view_by_key(DB, AppName, ViewName, Key) ->
 	search_view(DB, AppName, ViewName, [{key, Key}]).
 
 %% ====================================================================

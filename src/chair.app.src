@@ -2,11 +2,18 @@
 	{description, "CouchDB client"},
 	{vsn, "0.5.0"},
 	{modules, [
-          ]},
+		chair_app,
+		chair_sup,
+		chair
+    ]},
 	{registered, [
+		chair
 	]},
 	{applications, [
-               ]},
+		kernel, 
+		stdlib,
+		ibrowse
+    ]},
 	{mod, {chair_app, []}},
 	{start_phases, []} 
 ]
