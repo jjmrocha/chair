@@ -160,7 +160,7 @@ search_view(DB, AppName, ViewName, Query) ->
 		{ok, Config} -> 
 			View = "_design/" ++ AppName ++ "/_view/" ++ ViewName,
 			URLView = string:concat(Config#db_config.db_url, View),
-			ViewQuery = get_view_query(Query, ""),
+			ViewQuery = view_query(Query, ""),
 			Url = string:concat(URLView, ViewQuery),
 			case execute_get(Url) of
 				{ok, "200", Body} ->
@@ -268,31 +268,33 @@ proccess_delete(Body) ->
 	Doc1 = jsondoc:set_value(Doc, <<"_rev">>, Rev),
 	{ok, Doc1}.
 
-get_view_query([], Query) -> Query;
-get_view_query([{key, Value}|T], Query) -> get_view_query(T, concat_value(Query, "key=", Value));
-get_view_query([{descending, Value}|T], Query) -> get_view_query(T, concat_value(Query, "descending=", Value));
-get_view_query([{endkey, Value}|T], Query) -> get_view_query(T, concat_value(Query, "endkey=", Value));
-get_view_query([{endkey_docid, Value}|T], Query) -> get_view_query(T, concat_value(Query, "endkey_docid=", Value));
-get_view_query([{group, Value}|T], Query) -> get_view_query(T, concat_value(Query, "group=", Value));
-get_view_query([{group_level, Value}|T], Query) -> get_view_query(T, concat_value(Query, "group_level=", Value));
-get_view_query([{include_docs, Value}|T], Query) -> get_view_query(T, concat_value(Query, "include_docs=", Value));
-get_view_query([{inclusive_end, Value}|T], Query) -> get_view_query(T, concat_value(Query, "inclusive_end=", Value));
-get_view_query([{limit, Value}|T], Query) -> get_view_query(T, concat_value(Query, "limit=", Value));
-get_view_query([{reduce, Value}|T], Query) -> get_view_query(T, concat_value(Query, "reduce=", Value));
-get_view_query([{skip, Value}|T], Query) -> get_view_query(T, concat_value(Query, "skip=", Value));
-get_view_query([{startkey, Value}|T], Query) -> get_view_query(T, concat_value(Query, "startkey=", Value));
-get_view_query([{startkey_docid, Value}|T], Query) -> get_view_query(T, concat_value(Query, "startkey_docid=", Value));
-get_view_query([{update_seq, Value}|T], Query) -> get_view_query(T, concat_value(Query, "update_seq=", Value));
-get_view_query([_|T], Query) -> get_view_query(T, Query).
+view_query([], Query) -> Query;
+view_query([{key, Value}|T], Query) -> add_parameter(T, Query, "key=", Value);
+view_query([{descending, Value}|T], Query) -> add_parameter(T, Query, "descending=", Value);
+view_query([{endkey, Value}|T], Query) -> add_parameter(T, Query, "endkey=", Value);
+view_query([{endkey_docid, Value}|T], Query) -> add_parameter(T, Query, "endkey_docid=", Value);
+view_query([{group, Value}|T], Query) -> add_parameter(T, Query, "group=", Value);
+view_query([{group_level, Value}|T], Query) -> add_parameter(T, Query, "group_level=", Value);
+view_query([{include_docs, Value}|T], Query) -> add_parameter(T, Query, "include_docs=", Value);
+view_query([{inclusive_end, Value}|T], Query) -> add_parameter(T, Query, "inclusive_end=", Value);
+view_query([{limit, Value}|T], Query) -> add_parameter(T, Query, "limit=", Value);
+view_query([{reduce, Value}|T], Query) -> add_parameter(T, Query, "reduce=", Value);
+view_query([{skip, Value}|T], Query) -> add_parameter(T, Query, "skip=", Value);
+view_query([{startkey, Value}|T], Query) -> add_parameter(T, Query, "startkey=", Value);
+view_query([{startkey_docid, Value}|T], Query) -> add_parameter(T, Query, "startkey_docid=", Value);
+view_query([{update_seq, Value}|T], Query) -> add_parameter(T, Query, "update_seq=", Value);
+view_query([_|T], Query) -> view_query(T, Query).
 
-concat_value(Query, Key, Value) ->
-	Param = string:concat(Key, prepare_value(Value)),
-	contact_query(Query, Param).
+add_parameter(T, Query, Key, Value) ->
+	NewValue = prepare_value(Value),
+	Param = string:concat(Key, NewValue),
+	NewQuery = add_parameter_to_query(Query, Param),
+	view_query(T, NewQuery).
 
 prepare_value(Value) when is_list(Value) -> "\"" ++ Value ++ "\"";
 prepare_value(Value) when is_binary(Value) -> prepare_value(binary_to_list(Value));
 prepare_value(Value) when is_integer(Value) -> integer_to_list(Value);
 prepare_value(Value) when is_atom(Value) -> atom_to_list(Value).
 
-contact_query("", Param) -> string:concat("?", Param);
-contact_query(Query, Param) -> Query ++ "&" ++ Param.
+add_parameter_to_query("", Param) -> string:concat("?", Param);
+add_parameter_to_query(Query, Param) -> Query ++ "&" ++ Param.
