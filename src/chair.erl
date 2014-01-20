@@ -35,6 +35,7 @@
 -export([start_link/0]).
 -export([config_db/4, get_dbs/0]).
 -export([get_info/1, get_uuid/1, get_uuids/2]).
+-export([get_all_docs/1, get_all_docs/2]).
 -export([get_doc/2, insert_doc/2, update_doc/2, delete_doc/2]).
 -export([search_view/4, search_view_by_key/4]).
 
@@ -68,6 +69,27 @@ get_info(DB) ->
 			end;
 		error -> {error, db_not_found}
 	end.
+
+-spec get_all_docs(DB :: db_name()) -> {ok, [jsondoc:jsondoc(), ...]} | {error, any()}.
+get_all_docs(DB) ->
+	get_all_docs(DB, []).	
+
+-spec get_all_docs(DB :: db_name(), Query :: [{atom(), any()}, ...]) -> {ok, [jsondoc:jsondoc(), ...]} | {error, any()}.
+get_all_docs(DB, Query) ->
+	case get_config(DB) of
+		{ok, Config} -> 
+			URLView = string:concat(Config#db_config.db_url, "_all_docs"),
+			ViewQuery = view_query(Query, ""),
+			Url = string:concat(URLView, ViewQuery),
+			case execute_get(Url) of
+				{ok, "200", Body} -> 
+					Doc = jsondoc:decode(Body),
+					Rows = jsondoc:get_value(<<"rows">>, Doc),
+					{ok, Rows};
+				{error, Error} -> {error, Error}
+			end;
+		error -> {error, db_not_found}
+	end.	
 
 -spec get_uuid(DB :: db_name()) -> {ok, [binary()]} | {error, any()}.
 get_uuid(DB) ->
