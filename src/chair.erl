@@ -313,7 +313,7 @@ add_parameter(T, Query, Key, Value) ->
 	NewQuery = add_parameter_to_query(Query, Param),
 	view_query(T, NewQuery).
 
-prepare_value(Value) when is_list(Value) -> "\"" ++ Value ++ "\"";
+prepare_value(Value) when is_list(Value) -> "\"" ++ ibrowse_lib:url_encode(Value) ++ "\"";
 prepare_value(Value) when is_binary(Value) -> prepare_value(binary_to_list(Value));
 prepare_value(Value) when is_integer(Value) -> integer_to_list(Value);
 prepare_value(Value) when is_atom(Value) -> atom_to_list(Value).

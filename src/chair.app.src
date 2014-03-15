@@ -1,6 +1,6 @@
 {application, chair, [
 	{description, "CouchDB client"},
-	{vsn, "0.7.0"},
+	{vsn, "0.7.1"},
 	{modules, [
 		chair_app,
 		chair_sup,
