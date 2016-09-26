@@ -12,7 +12,8 @@
 	{applications, [
 		kernel, 
 		stdlib,
-		ibrowse
+		ibrowse,
+		jsondoc
     ]},
 	{mod, {chair_app, []}},
 	{start_phases, []} 
